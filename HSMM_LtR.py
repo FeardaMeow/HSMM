@@ -17,11 +17,16 @@ class HSMM_LtR():
     def train(self):
         pass
 
-    def calculate_transition_matrix(self):
+    def _calculate_transition_matrix(self):
         pass
 
-    def estimate_duration(self):
+    def _estimate_duration(self):
         pass
 
-    
+    def _forward(self):
+        pass
+
+    def _backward(self):
+        pass
+
     
