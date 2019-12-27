@@ -14,14 +14,17 @@ class HSMM_LtR():
         self.duration_params = None
         self.f_duration = None
 
+        # Time delta
+        self.t_delta = None
+
     def train(self):
         pass
 
     def _calculate_transition_matrix(self):
         pass
 
-    def _estimate_duration(self):
-        pass
+    def _estimate_duration(self, d, A, alpha, obs_probs):
+        d_est = A.dot()
 
     def _forward(self):
         pass
@@ -29,4 +32,3 @@ class HSMM_LtR():
     def _backward(self):
         pass
 
-    
