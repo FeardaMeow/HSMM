@@ -41,15 +41,19 @@ class HSMM_LtR():
         Output:
             N x 1 array for the estimated duration for the current timestep
         '''
-        d_est = ((A.dot(alpha[0,:]).dot(obs_probs))/alpha[1,:])*(d+self.t_delta)
+        d_est = (np.diag(A)*alpha[0,:]*obs_probs/alpha[1,:])*(d + self.t_delta)
         return d_est
 
-    def _forward(self, obs_probs, ):
+    def _forward(self, obs_probs):
         '''
         Input:
             obs_probs: TxN matrix of the observation probabilities at each timestep for all hidden states
         Output:
-
+            tuple of 4 values 
+            (forward probabilities matrix (TxN), 
+            dyanmic transition matrices (NxNxT), 
+            duration estimate matrix (TxN),
+            the log likelihood of the model)
         '''
         # Initialize the duration estimates
         duration_est = np.ones(obs_probs.shape)*self.t_delta
@@ -79,6 +83,9 @@ class HSMM_LtR():
         
         return(alpha, A_dt, duration_est, log_likelihood)
 
-    def _backward(self):
-        pass
+    def _backward(self, obs_probs, A_dt):
+        beta = np.ones(obs_probs.shape)
+        for t in range(obs_probs.shape[0]-2, -1, -1):
+            beta[t,:] = A_dt[:,:,t].dot(obs_probs[t+1,:]*beta[t+1,:])
 
+        return beta
