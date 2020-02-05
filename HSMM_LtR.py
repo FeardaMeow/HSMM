@@ -9,15 +9,39 @@ class HSMM_LtR():
 
         # Function placeholders for user defined, follows scipy object methods
         self.f_obs = None
-        self.obs_params = None
+        self.obs_params = []
 
-        self.duration_params = None
         self.f_duration = None
-
+        self.duration_params = []
+        
         # Time delta
         self.t_delta = None
 
-    def train(self):
+        # Current likelihood
+        self.likelihodd = None
+
+    def train(self, x):
+        # Initialize parameters
+
+        # calculate observation probabilities
+
+        # calculate forward probabilities
+
+        # calculate backwards probabilities
+
+        # calculate filtered probabilities
+
+        # update observation parameters
+
+        # update duration parameters
+
+        # check convergence criteria
+
+        pass
+    
+    def _initialize(self, x):
+        # Initialize obs_params
+        # Initialize duration_params
         pass
 
     def _calculate_transition_matrix(self, d):
@@ -58,9 +82,9 @@ class HSMM_LtR():
         # Initialize the duration estimates
         duration_est = np.ones(obs_probs.shape)*self.t_delta
 
-        # Initialize the dynamic transition matrix
-        A_dt = np.zeros((self.N, self.N, obs_probs.shape[0]))
-        A_dt[:,:,0] = self._calculate_transition_matrix(duration_est[0,:])
+        # Calculate the dynamic transitsion matrix
+        A = np.zeros((obs_probs.shape[0], self.N, self.N))
+        A[0,:,:] = self._calculate_transition_matrix(duration_est[0,:])
 
         # Initialize the forward probabilities
         alpha = np.zeros(obs_probs.shape)
@@ -69,23 +93,49 @@ class HSMM_LtR():
         log_likelihood = np.log(1/np.sum(alpha[0,:]))
 
         alpha[0,:] /= np.sum(alpha[0,:])
-        # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
 
         for t in range(1,obs_probs.shape[0]):
-            alpha[t,:] = alpha[t-1,:].dot(A_dt[:,:,t-1])*obs_probs[t,:]
-            log_likelihood += np.log(1/np.sum(alpha[t,:]))
-            alpha[t,:] /= np.sum(alpha[t,:])
+            alpha[t,:] = alpha[t-1,:].dot(A[t-1,:,:])*obs_probs[t,:]
+            alpha_sum = np.sum(alpha[t,:])
+            log_likelihood += np.log(1/alpha_sum)
+            alpha[t,:] /= alpha_sum
             # Estimate next duration
-            duration_est[t,:] = self._estimate_duration(duration_est[t-1,:], A_dt[:,:,t-1], alpha[t-1:t+1,:], obs_probs[t,:])
-            A_dt[:,:,t] = self._calculate_transition_matrix(duration_est[t,:])
+            duration_est[t,:] = self._estimate_duration(duration_est[t-1,:], A[t-1,:,:], alpha[t-1:t+1,:], obs_probs[t,:])
+            A[t,:,:] = self._calculate_transition_matrix(duration_est[t,:])
         
         log_likelihood *= -1
         
-        return(alpha, A_dt, duration_est, log_likelihood)
+        # Maximize log likelihood for best model
+        return alpha, A, duration_est, log_likelihood
 
-    def _backward(self, obs_probs, A_dt):
+    def _backward(self, obs_probs, A):
         beta = np.ones(obs_probs.shape)
         for t in range(obs_probs.shape[0]-2, -1, -1):
-            beta[t,:] = A_dt[:,:,t].dot(obs_probs[t+1,:]*beta[t+1,:])
+            beta[t,:] = A[t,:,:].dot(obs_probs[t+1,:]*beta[t+1,:])
 
         return beta
+
+    def _filtered(self, alpha, beta, obs_probs, A):
+        '''
+        Input:
+            obs_probs: TxN matrix of the observation probabilities at each timestep for all hidden states
+        Output:
+            TxN array of the probabilities of being in state i at the 
+        '''
+        ##### Only needed to update the transition matrix #####
+        # Multiply alpha across the rows of the transition matrix
+        #prob_i_j = (alpha[:,:,np.newaxis]*A)[:-1,:,:] # T-1xNxN
+        # Multiply obs_probs*beta across the columns of the transition matrix
+        #prob_i_j = prob_i_j*(obs_probs*beta)[1:,np.newaxis,:] # T-1xNxN
+
+        # Calculate the probability of being in state i at time t given all the observed data and model parameters
+        prob_i = alpha*beta
+        prob_i = prob_i / np.sum(prob_i, axis=1)[:,np.newaxis]
+
+        return prob_i
+
+    def _update_obs_params(self, x, prob_i):
+        pass
+    
+    def _update_duration_params(self, alpha, beta, obs_probs, A, d):
+        pass
