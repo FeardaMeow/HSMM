@@ -1,47 +1,86 @@
 import numpy as np
+from typing import TypeVar, List, Tuple
+from nptyping import Array
+
 
 class HSMM_LtR():
     # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
-    def __init__(self, N, A=None, pi=None):
+    def __init__(self, N: int, f_obs, f_duration, obs_params = None, duration_params = None, t_delta:float=1/60, A=None, pi=None) -> None:
         self.N = N
         self.A = A
         self.pi = pi
 
         # Function placeholders for user defined, follows scipy object methods
-        self.f_obs = None
-        self.obs_params = []
+        self.f_obs = f_obs
+        self.obs_params = obs_params
 
-        self.f_duration = None
-        self.duration_params = []
+        self.f_duration = f_duration
+        self.duration_params = duration_params
         
         # Time delta
-        self.t_delta = None
+        self.t_delta = t_delta
 
         # Current likelihood
-        self.likelihodd = None
+        self.likelihood = None
 
-    def train(self, x):
+        # Time after TOT in seconds
+        self.T_after = 2
+
+    def _calc_probs(self, x, f='observation'):
+        probs_list = []
+        if f == 'observation':
+            for params in self.obs_params:
+                probs_list.append(self.f_obs.pdf(x, *params))
+        
+        return np.vstack(probs_list).T
+
+    def train(self, x: List[Array[float]], n:int=100):
         # Initialize parameters
+        self._initialize(x)
+        counter = 0
 
-        # calculate observation probabilities
+        while counter < n:
+            for x_i in x:
+                # calculate observation probabilities
+                obs_probs = self._calc_probs(x_i, 'observation')
 
-        # calculate forward probabilities
+                # calculate forward probabilities
+                
 
-        # calculate backwards probabilities
+                # calculate backwards probabilities
 
-        # calculate filtered probabilities
 
-        # update observation parameters
+                # calculate filtered probabilities
 
-        # update duration parameters
 
-        # check convergence criteria
+            # update observation parameters
+
+            # update duration parameters
+
+            # check convergence criteria
+
+            count += 1
 
         pass
     
-    def _initialize(self, x):
+    def _initialize(self, x: List[Array[float]], n :float = 0.1) -> None:
+        # Initialize A
+        if self.A is None:
+            np.zeros((self.N, self.N))
+            rng = np.arange(self.N-1)
+            self.A[rng, rng+1] = 1
+            self.A[-1,-1] = 1
+
+        # Initialize pi
+        if self.pi is None:
+            self.pi = np.zeros(self.N)
+            self.pi[0] = 1
+
         # Initialize obs_params
+        
+
         # Initialize duration_params
+
         pass
 
     def _calculate_transition_matrix(self, d):
@@ -51,11 +90,17 @@ class HSMM_LtR():
         Output:
             N x N matrix of the current timesteps dynamic transition probabilities
         '''
-        duration_probability = [(1 - self.f_duration.cdf(d[i], *self.duration_params[i]))/np.max(1 - self.f_duration.cdf(d[i] - self.t_delta, *self.duration_params[i]),0.0001) for i in range(self.N)]
-        self_transition_matrix = np.eye(self.N) * duration_probability 
-        return self_transition_matrix + (np.eye(self.N) - self_transition_matrix).dot(self.A)
+        duration_probability = list()
+        for i in range(int(self.N)):
+            numerator = 1 - self.f_duration.cdf(d[i], *self.duration_params[i])
+            denom = max(1 - self.f_duration.cdf(d[i] - self.t_delta, *self.duration_params[i]), 0.001)
+            duration_probability.append(numerator/denom)
+        self_transition_matrix = np.eye(self.N) * np.array(duration_probability)
+        self_transition_matrix = self_transition_matrix + (np.eye(self.N) - self_transition_matrix).dot(self.A)
+        # Normalize the rows of the transition matrix to sum to 1
+        return self_transition_matrix/np.sum(self_transition_matrix, axis=1)[:,np.newaxis]
 
-    def _estimate_duration(self, d, A, alpha, obs_probs):
+    def _estimate_duration(self, d: Array[float], A: Array[float], alpha, obs_probs) -> Array[float]:
         '''
         Input:
             d: Nx1 array of the previous timestep duration estimates
@@ -65,10 +110,12 @@ class HSMM_LtR():
         Output:
             N x 1 array for the estimated duration for the current timestep
         '''
-        d_est = (np.diag(A)*alpha[0,:]*obs_probs/alpha[1,:])*(d + self.t_delta)
+        #d_est = ((np.diag(A)*alpha[0,:]*obs_probs)/alpha[1,:])*d + self.t_delta
+        # Azimi et al.
+        d_est = alpha[0,:]*d + self.t_delta
         return d_est
 
-    def _forward(self, obs_probs):
+    def _forward(self, obs_probs: Array[float]) -> Tuple[Array[float], Array[float], Array[float], float]:
         '''
         Input:
             obs_probs: TxN matrix of the observation probabilities at each timestep for all hidden states
@@ -77,7 +124,7 @@ class HSMM_LtR():
             (forward probabilities matrix (TxN), 
             dyanmic transition matrices (NxNxT), 
             duration estimate matrix (TxN),
-            the log likelihood of the model)
+            the log likelihood of the model)S
         '''
         # Initialize the duration estimates
         duration_est = np.ones(obs_probs.shape)*self.t_delta
@@ -98,7 +145,10 @@ class HSMM_LtR():
             alpha[t,:] = alpha[t-1,:].dot(A[t-1,:,:])*obs_probs[t,:]
             alpha_sum = np.sum(alpha[t,:])
             log_likelihood += np.log(1/alpha_sum)
-            alpha[t,:] /= alpha_sum
+            # Check if any alpha is zero and inject a small probability = 0.001
+            if np.all(alpha[t,:] > 0) == False:
+                alpha[t,:] += 0.001
+            alpha[t,:] /= np.sum(alpha[t,:])
             # Estimate next duration
             duration_est[t,:] = self._estimate_duration(duration_est[t-1,:], A[t-1,:,:], alpha[t-1:t+1,:], obs_probs[t,:])
             A[t,:,:] = self._calculate_transition_matrix(duration_est[t,:])
@@ -108,17 +158,20 @@ class HSMM_LtR():
         # Maximize log likelihood for best model
         return alpha, A, duration_est, log_likelihood
 
-    def _backward(self, obs_probs, A):
+    def _backward(self, obs_probs: Array[float], A: Array[float]):
         beta = np.ones(obs_probs.shape)
         for t in range(obs_probs.shape[0]-2, -1, -1):
             beta[t,:] = A[t,:,:].dot(obs_probs[t+1,:]*beta[t+1,:])
 
         return beta
 
-    def _filtered(self, alpha, beta, obs_probs, A):
+    def _filtered(self, alpha, beta, obs_probs, A: Array[float]):
         '''
         Input:
+            alpha:
+            beta:
             obs_probs: TxN matrix of the observation probabilities at each timestep for all hidden states
+            A:
         Output:
             TxN array of the probabilities of being in state i at the 
         '''
@@ -139,3 +192,44 @@ class HSMM_LtR():
     
     def _update_duration_params(self, alpha, beta, obs_probs, A, d):
         pass
+
+def main():
+    from scipy.stats import norm
+    from matplotlib import pyplot as plt
+
+    np.random.seed(123)
+
+    data, durations = sim_data(500, norm, [(0,1), (4,1), (8,1)], norm, [(10,2), (15,2), (15,2)])
+
+    hsmm = HSMM_LtR(N=3, f_obs = norm, f_duration = norm)
+    hsmm.duration_params = [(10,2), (15,2), (15,2)]
+    hsmm.obs_params = [(0,1), (4,1), (8,1)]
+    hsmm.A = np.array([[0,1,0],[0,0,1],[0,0,1]])
+    hsmm.pi = np.array([1,0,0])
+    
+    obs_probs = hsmm._calc_probs(data[0])
+    alpha, A, duration_est, log_likelihood = hsmm._forward(obs_probs)
+
+    print(durations[0]/60)
+
+    plt.plot(duration_est[:,0])
+
+    # plt.plot(alpha[:,0])
+    # plt.plot(alpha[:,1])
+    # plt.plot(alpha[:,2])
+    plt.show()
+    
+
+def sim_data(num_ts, state_density, state_params, duration_density, duration_params):
+    data = []
+    durations = []
+    for _ in range(num_ts):
+        duration_list = [int(np.abs(duration_density.rvs(*i)*60)) for i in duration_params]
+        data_temp = [state_density.rvs(*i, size = d) for d,i in zip(duration_list, state_params)]
+        data.append(np.concatenate(data_temp))
+        durations.append(np.array(duration_list))
+
+    return data, durations
+
+if __name__ == "__main__":
+    main()
