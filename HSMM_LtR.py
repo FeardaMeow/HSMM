@@ -72,6 +72,10 @@ class HSMM_LtR():
             counter += 1
 
     def _calc_duration_ss(self, forward_probs, backward_probs, obs_probs, duration_est, A) -> Tuple[Array[float],Array[float]]:
+        '''
+        TODO: Check einsum is producing correct product
+        TODO: Finish calculating expected value and variance of the duration est
+        '''
         numerator = np.einsum('tij,ti->ti',A[:-1,:,:],obs_probs[1:,:]*backward_probs[1:,:])
         pass
     
