@@ -3,7 +3,6 @@ from typing import TypeVar, List, Tuple
 from nptyping import Array
 from random import sample
 
-
 class HSMM_LtR():
     # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
     def __init__(self, N: int, f_obs, f_duration, obs_params = None, duration_params = None, t_delta:float=1/60, A=None, pi=None) -> None:
@@ -48,6 +47,8 @@ class HSMM_LtR():
 
         while counter < n:
             np.random.shuffle(x)
+            duration_ss = []
+            obs_ss = []
             for x_i in x:
                 # calculate observation probabilities
                 obs_probs = self._calc_probs(x_i, 'observation')
@@ -61,13 +62,23 @@ class HSMM_LtR():
                 # calculate filtered probabilities
                 prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
 
+                # calculate the duration sufficient statistics
+                duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, A, duration_est))
+
+                # calculate the obs sufficient statistics
+                obs_ss.append(self._calc_obs_ss(x_i, prob_i))
+            
+            # check convergence criteria
+            if self.likelihood != None and log_likelihood < self.likelihood:
+                break
+            
+            self.likelihood = log_likelihood
+
             # update observation parameters
-            self._update_obs_params(x_i, prob_i)
+            self._update_obs_params(obs_ss)
 
             # update duration parameters
-            self._update_duration_params(forward_probs, backward_probs, obs_probs, A, duration_est)
-
-            # check convergence criteria
+            self._update_duration_params(duration_ss)
 
             counter += 1
 
@@ -76,8 +87,21 @@ class HSMM_LtR():
         TODO: Check einsum is producing correct product
         TODO: Finish calculating expected value and variance of the duration est
         '''
-        numerator = np.einsum('tij,ti->ti',A[:-1,:,:],obs_probs[1:,:]*backward_probs[1:,:])
-        pass
+        numerator = forward_probs[:-1,:]*np.einsum('tij,ti->ti',(np.ones((self.N,self.N)) - np.eye(self.N))[np.newaxis,:,:]*A[:-1,:,:],obs_probs[1:,:]*backward_probs[1:,:])
+        num_sum = np.sum(numerator, axis=0)
+        num_sum[num_sum == 0] = 1
+
+        expected_value = np.sum(numerator*duration_est[:-1,:], axis=0)
+        expected_value = expected_value/num_sum
+
+        variance = np.sum(numerator*(duration_est[:-1,:] - expected_value[np.newaxis,:]), axis=0)
+        variance = variance/num_sum
+
+        # Set the last state values
+        expected_value[-1] = self.T_after*self.t_delta
+        variance[-1] = 0.1
+
+        return expected_value, variance
     
     def _initialize(self, x:List[Array[float]], n:float = 0.1) -> None:
         # Initialize A
@@ -235,10 +259,36 @@ class HSMM_LtR():
 
         return prob_i
 
-    def _update_obs_params(self, x, prob_i):
+    def _viterbi(self, x):
+        # observation probabilities
+        obs_probs = self._calc_probs(x, 'observation')
+
+        # calculate forward probabilities
+        forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
+
+        T_1 = np.zeros((x.shape[0], self.N))
+        T_2 = np.zeros((x.shape[0], self.N))
+
+        T_1[0,:] = self.pi * obs_probs[0,:]
+
+        for t in range(1,x.shape[0]):
+            T_1[t,:] = np.max(T_1[t-1,:][:,np.newaxis] * (A[t-1,:,:] * obs_probs[t,:][np.newaxis,:]), axis=0)
+            T_1[t,:] += 0.001
+            T_1[t,:] = T_1[t,:]/np.sum(T_1[t,:])
+            T_2[t,:] = np.argmax(T_1[t-1,:][:,np.newaxis] * (A[t-1,:,:] * obs_probs[t,:][np.newaxis,:]), axis=0)
+        
+        best_path_prob = np.max(T_1[-1,:])
+        best_path_pointer = np.argmax(T_1[-1,:])
+
+        # TODO: Calculate the best path by following the best states with best_path_pointer and T_2
+
+    def _calc_obs_ss(self, x, prob_i):
+        pass
+
+    def _update_obs_params(self, obs_ss):
         pass
     
-    def _update_duration_params(self, forward_probs, backward_probs, obs_probs, A, d):
+    def _update_duration_params(self, duration_ss):
         pass
 
 def main():
@@ -249,7 +299,7 @@ def main():
 
     data_index = 123
     obs_params = [(0,1), (4,1), (8,1)]
-    duration_params = [(10,2), (15,2), (15,2)]
+    duration_params = [(10,2), (15,2), (2,.1)]
 
     data, durations = sim_data(500, norm, obs_params, norm, duration_params)
 
@@ -274,12 +324,18 @@ def main():
 
     print(log_likelihood)
 
+    d_mean, d_var = hsmm._calc_duration_ss(alpha, beta, obs_probs, duration_est, A)
+
+    print(d_mean, d_var)
+
     # All duration estimates are underestimates of the true duration
+    '''
     plt.plot(duration_est[:,0], 'r')
     plt.plot(duration_est[:,1], 'b')
     plt.plot(duration_est[:,2], 'g')
 
     plt.show()
+    '''
     
 
 def sim_data(num_ts, state_density, state_params, duration_density, duration_params, realistic=True):
