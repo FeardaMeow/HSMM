@@ -264,7 +264,7 @@ class HSMM_LtR():
         obs_probs = self._calc_probs(x, 'observation')
 
         # calculate forward probabilities
-        forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
+        _, A, _, _ = self._forward(obs_probs)
 
         T_1 = np.zeros((x.shape[0], self.N))
         T_2 = np.zeros((x.shape[0], self.N))
