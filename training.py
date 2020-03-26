@@ -16,15 +16,26 @@ class hsmm_model(hsmm.HSMM_LtR):
         return mean, variance
 
     def _update_obs_params(self, obs_ss):
-        pass
+        # Unpack data
+        obs_mean = [i[0] for i in obs_ss]
+        obs_stdev = [np.sqrt(i[1]) for i in obs_ss]
+
+        obs_mean = np.mean(np.array(obs_mean), axis=0)
+        obs_stdev = np.mean(np.array(obs_stdev), axis=0)
+
+        obs_params = [(i,j) for i,j in zip(obs_mean, obs_stdev)]
+        self.obs_params = obs_params
     
     def _update_duration_params(self, duration_ss):
-        pass
+        # Unpack data
+        duration_mean = [i[0] for i in duration_ss]
+        duration_stdev = [np.sqrt(i[1]) for i in duration_ss]
 
-    def _initialize(self, x):
-        # Initialize obs_params
-        # Initialize duration_params
-        pass
+        duration_mean = np.mean(np.array(duration_mean), axis=0)
+        duration_stdev = np.mean(np.array(duration_stdev), axis=0)
+
+        duration_params = [(i,j) for i,j in zip(duration_mean, duration_stdev)]
+        self.duration_params = duration_params
 
 def sim_data(num_ts, state_density, state_params, duration_density, duration_params):
     data = []

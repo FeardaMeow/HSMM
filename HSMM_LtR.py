@@ -2,6 +2,7 @@ import numpy as np
 from typing import TypeVar, List, Tuple
 from nptyping import Array
 from random import sample
+from scipy.stats import norm
 
 class HSMM_LtR():
     # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
@@ -33,12 +34,6 @@ class HSMM_LtR():
                 probs_list.append(self.f_obs.pdf(x, *params))
         
         return np.vstack(probs_list).T
-
-    def predict(self, x, y):
-        pass
-
-    def viterbi(self, x):
-        pass
 
     def fit(self, x: List[Array[float]], n:int=100):
         # Initialize parameters
@@ -264,7 +259,7 @@ class HSMM_LtR():
         obs_probs = self._calc_probs(x, 'observation')
 
         # calculate forward probabilities
-        _, A, _, _ = self._forward(obs_probs)
+        _, A, duration_est, _ = self._forward(obs_probs)
 
         T_1 = np.zeros((x.shape[0], self.N))
         T_2 = np.zeros((x.shape[0], self.N))
@@ -277,10 +272,45 @@ class HSMM_LtR():
             T_1[t,:] = T_1[t,:]/np.sum(T_1[t,:])
             T_2[t,:] = np.argmax(T_1[t-1,:][:,np.newaxis] * (A[t-1,:,:] * obs_probs[t,:][np.newaxis,:]), axis=0)
         
-        best_path_prob = np.max(T_1[-1,:])
+        #best_path_prob = np.max(T_1[-1,:])
         best_path_pointer = np.argmax(T_1[-1,:])
 
-        # TODO: Calculate the best path by following the best states with best_path_pointer and T_2
+        return T_1[-1,:], best_path_pointer, duration_est[-1,:]
+
+    def predict(self, x, ci=0.95):
+        ci_std_value = round(norm.ppf(ci + (1-ci)/2),2)
+
+        d_avg = 0
+        d_low = 0
+        d_high = 0
+
+        # Unpack duration params
+        duration_mean = [i[0] for i in self.duration_params]
+        duration_stdev = [i[1] for i in self.duration_params]
+
+        duration_mean = np.array(duration_mean[:-1])
+        duration_stdev = np.array(duration_stdev[:-1])
+
+        # Initialize counter and current state tracker
+        n = 0
+        current_prob, current_state, current_duration = self._viterbi(x)
+
+        while n <= self.N and current_state != self.N-1:
+            if n == 1:
+                d_avg = d_avg + np.sum((duration_mean - current_duration[:-1])*current_prob[:-1])
+                d_low = d_low + np.sum(np.clip((duration_mean - duration_stdev*ci_std_value - current_duration[:-1])*current_prob[:-1]), 0, None)
+                d_high = d_high + np.sum((duration_mean + duration_stdev*ci_std_value - current_duration[:-1])*current_prob[:-1])
+            else:
+                d_avg = d_avg + np.sum((duration_mean)*current_prob[:-1])
+                d_low = d_low + np.sum(np.clip((duration_mean - duration_stdev*ci_std_value)*current_prob[:-1]), 0, None)
+                d_high = d_high + np.sum((duration_mean + duration_stdev*ci_std_value)*current_prob[:-1])
+
+            current_prob = np.dot(self.A.T, current_prob)
+            current_state = np.argmax(current_prob, axis=0)
+
+            n+=1
+
+        return d_avg, d_low, d_high
 
     def _calc_obs_ss(self, x, prob_i):
         pass
@@ -328,14 +358,9 @@ def main():
 
     print(d_mean, d_var)
 
-    # All duration estimates are underestimates of the true duration
-    '''
-    plt.plot(duration_est[:,0], 'r')
-    plt.plot(duration_est[:,1], 'b')
-    plt.plot(duration_est[:,2], 'g')
+    v_prob, v_state, _ = hsmm._viterbi(data[data_index][0:20])
 
-    plt.show()
-    '''
+    print(v_prob, v_state)
     
 
 def sim_data(num_ts, state_density, state_params, duration_density, duration_params, realistic=True):
