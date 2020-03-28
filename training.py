@@ -9,9 +9,14 @@ class hsmm_model(hsmm.HSMM_LtR):
         super().__init__(**kwargs)
 
     def _calc_obs_ss(self, x, prob_i):
+        '''
+        TODO: Ensure variance isnt smaller than 0.1
+        '''
         denom_sum = np.sum(prob_i, axis=0)
         mean = np.sum(prob_i*x[:,np.newaxis], axis=0)/denom_sum
         variance = np.sum(prob_i*np.power(x[:,np.newaxis] - mean[np.newaxis,:],2), axis=0)/denom_sum
+
+        variance[variance <= 0.1] = 0.1
 
         return mean, variance
 
@@ -36,17 +41,6 @@ class hsmm_model(hsmm.HSMM_LtR):
 
         duration_params = [(i,j) for i,j in zip(duration_mean, duration_stdev)]
         self.duration_params = duration_params
-
-def sim_data(num_ts, state_density, state_params, duration_density, duration_params):
-    data = []
-    durations = []
-    for i in range(num_ts):
-        duration_list = [int(np.abs(duration_density.rvs(*i)*60)) for i in duration_params]
-        data_temp = [state_density.rvs(*i, size = d) for d,i in zip(duration_list, state_params)]
-        data.append(np.concatenate(data_temp))
-        durations.append(duration_list)
-
-    return data, durations
 
 def train_test_split(data, p=3):
     '''
@@ -85,19 +79,34 @@ def main():
     seed = 1234566
     np.random.seed(seed)
     random.seed(seed)
-    with open('final_data.pk', 'rb') as f:
-        final_data = pk.load(f, encoding='latin1')
+
+    obs_params = [(0,1), (4,1), (8,1)]
+    duration_params = [(10,2), (15,2), (2,.1)]
+
+    data, durations = hsmm.sim_data(500, norm, obs_params, norm, duration_params)
+
+    model = hsmm_model(N=3, f_obs = norm, f_duration = norm)
+    model.fit(data)
+
+    print("Duration Parameters: ")
+    print(model.duration_params)
+
+    print("Observation Parameters: ")
+    print(model.obs_params)
+
+    #with open('final_data.pk', 'rb') as f:
+    #    final_data = pk.load(f, encoding='latin1')
 
     # Train Test Split
-    train, test = train_test_split(final_data, p=3)
+    #train, test = train_test_split(final_data, p=3)
 
-    print(train['PID01'][0], train['PID02'][0])
-    print(test['PID01'][0], test['PID02'][0])
-    with open('train.pk', 'wb') as f:
-        pk.dump(train, f)
+    #print(train['PID01'][0], train['PID02'][0])
+    #print(test['PID01'][0], test['PID02'][0])
+    #with open('train.pk', 'wb') as f:
+    #    pk.dump(train, f)
 
-    with open('test.pk', 'wb') as f:
-        pk.dump(test, f)
+    #with open('test.pk', 'wb') as f:
+    #    pk.dump(test, f)
     
 
 if __name__ == "__main__":

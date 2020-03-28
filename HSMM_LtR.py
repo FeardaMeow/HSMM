@@ -3,6 +3,7 @@ from typing import TypeVar, List, Tuple
 from nptyping import Array
 from random import sample
 from scipy.stats import norm
+from tqdm import tqdm
 
 class HSMM_LtR():
     # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
@@ -41,15 +42,17 @@ class HSMM_LtR():
         counter = 0
 
         while counter < n:
+            overall_likelihood = 0
             np.random.shuffle(x)
             duration_ss = []
             obs_ss = []
-            for x_i in x:
+            for x_i in tqdm(x):
                 # calculate observation probabilities
                 obs_probs = self._calc_probs(x_i, 'observation')
 
                 # calculate forward probabilities
                 forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
+                overall_likelihood += log_likelihood
 
                 # calculate backwards probabilities
                 backward_probs = self._backward(obs_probs, A)
@@ -58,16 +61,18 @@ class HSMM_LtR():
                 prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
 
                 # calculate the duration sufficient statistics
-                duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, A, duration_est))
+                duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, duration_est, A))
 
                 # calculate the obs sufficient statistics
                 obs_ss.append(self._calc_obs_ss(x_i, prob_i))
             
+            print('Iteration ' + str(counter+1) + ': ' + str(overall_likelihood))
+            
             # check convergence criteria
-            if self.likelihood != None and log_likelihood < self.likelihood:
+            if self.likelihood != None and overall_likelihood < self.likelihood:
                 break
             
-            self.likelihood = log_likelihood
+            self.likelihood = overall_likelihood
 
             # update observation parameters
             self._update_obs_params(obs_ss)
@@ -75,12 +80,16 @@ class HSMM_LtR():
             # update duration parameters
             self._update_duration_params(duration_ss)
 
+            print('Observation Parameters:')
+            print(self.obs_params)
+            print('Duration Parameters:')
+            print(self.duration_params)
+
             counter += 1
 
     def _calc_duration_ss(self, forward_probs, backward_probs, obs_probs, duration_est, A) -> Tuple[Array[float],Array[float]]:
         '''
-        TODO: Check einsum is producing correct product
-        TODO: Finish calculating expected value and variance of the duration est
+        TODO: Ensure variance isnt smaller than 0.1
         '''
         numerator = forward_probs[:-1,:]*np.einsum('tij,ti->ti',(np.ones((self.N,self.N)) - np.eye(self.N))[np.newaxis,:,:]*A[:-1,:,:],obs_probs[1:,:]*backward_probs[1:,:])
         num_sum = np.sum(numerator, axis=0)
@@ -89,12 +98,14 @@ class HSMM_LtR():
         expected_value = np.sum(numerator*duration_est[:-1,:], axis=0)
         expected_value = expected_value/num_sum
 
-        variance = np.sum(numerator*(duration_est[:-1,:] - expected_value[np.newaxis,:]), axis=0)
+        variance = np.sum(numerator*np.power(duration_est[:-1,:] - expected_value[np.newaxis,:],2), axis=0)
         variance = variance/num_sum
 
         # Set the last state values
         expected_value[-1] = self.T_after*self.t_delta
         variance[-1] = 0.1
+
+        variance[variance <= 0.1] = 0.1
 
         return expected_value, variance
     
@@ -210,8 +221,8 @@ class HSMM_LtR():
             alpha_sum = np.sum(alpha[t,:])
             log_likelihood += np.log(1/alpha_sum)
             # Check if any alpha is zero and inject a small probability = 0.001
-            if np.all(alpha[t,:] > 0) == False:
-                alpha[t,:] += 0.001
+            alpha[t,:] = np.nan_to_num(alpha[t,:])
+            alpha[t,:] += 0.001
             alpha[t,:] /= np.sum(alpha[t,:])
             # Estimate next duration
             duration_est[t,:] = self._estimate_duration(duration_est[t-1,:], A[t-1,:,:], alpha[t-1:t+1,:], obs_probs[t,:])
@@ -226,8 +237,8 @@ class HSMM_LtR():
         beta = np.ones(obs_probs.shape)
         for t in range(obs_probs.shape[0]-2, -1, -1):
             beta[t,:] = A[t,:,:].dot(obs_probs[t+1,:]*beta[t+1,:])
-            if np.all(beta[t,:] > 0) == False:
-                beta[t,:] += 0.001
+            beta[t,:] = np.nan_to_num(beta[t,:])
+            beta[t,:] += 0.001
             beta[t,:] /= np.sum(beta[t,:])
 
         return beta
@@ -313,12 +324,31 @@ class HSMM_LtR():
         return d_avg, d_low, d_high
 
     def _calc_obs_ss(self, x, prob_i):
+        '''
+        Input:
+            x: 1 obervation time series
+            prob_i: the filtered probabilities of being in state i and time t
+        Output:
+            Tuple(expected value, variance)
+        '''
         pass
 
     def _update_obs_params(self, obs_ss):
+        '''
+        Input:
+            obs_ss: list of tuples(expected value, variance)
+        Output:
+            None: will update obs_params
+        '''
         pass
     
     def _update_duration_params(self, duration_ss):
+        '''
+        Input:
+            duration_ss: list of tuples(expected value, variance)
+        Output:
+            None: Will update self.duration_params
+        '''
         pass
 
 def main():
