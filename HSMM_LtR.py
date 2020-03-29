@@ -4,6 +4,8 @@ from nptyping import Array
 from random import sample
 from scipy.stats import norm
 from tqdm import tqdm
+from numba import jit
+import multiprocessing as mp
 
 class HSMM_LtR():
     # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
@@ -36,7 +38,7 @@ class HSMM_LtR():
         
         return np.vstack(probs_list).T
 
-    def fit(self, x: List[Array[float]], n:int=100):
+    def fit(self, x: List[Array[float]], n:int=100, parallel:bool=False):
         # Initialize parameters
         self._initialize(x)
         counter = 0
@@ -46,27 +48,31 @@ class HSMM_LtR():
             np.random.shuffle(x)
             duration_ss = []
             obs_ss = []
-            for x_i in tqdm(x):
-                # calculate observation probabilities
-                obs_probs = self._calc_probs(x_i, 'observation')
+            if parallel:
+                pass
+            else:
+                for x_i in tqdm(x):
+                    # calculate observation probabilities
+                    obs_probs = self._calc_probs(x_i, 'observation')
 
-                # calculate forward probabilities
-                forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
-                overall_likelihood += log_likelihood
+                    # calculate forward probabilities
+                    forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
+                    overall_likelihood += log_likelihood
 
-                # calculate backwards probabilities
-                backward_probs = self._backward(obs_probs, A)
+                    # calculate backwards probabilities
+                    backward_probs = self._backward(obs_probs, A)
 
-                # calculate filtered probabilities
-                prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
+                    # calculate filtered probabilities
+                    prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
 
-                # calculate the duration sufficient statistics
-                duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, duration_est, A))
+                    # calculate the duration sufficient statistics
+                    duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, duration_est, A))
 
-                # calculate the obs sufficient statistics
-                obs_ss.append(self._calc_obs_ss(x_i, prob_i))
+                    # calculate the obs sufficient statistics
+                    obs_ss.append(self._calc_obs_ss(x_i, prob_i))
             
             print('Iteration ' + str(counter+1) + ': ' + str(overall_likelihood))
+            #print("Elapsed = %s" % (end - start))
             
             # check convergence criteria
             if self.likelihood != None and overall_likelihood < self.likelihood:
@@ -86,6 +92,33 @@ class HSMM_LtR():
             print(self.duration_params)
 
             counter += 1
+    
+    @jit()
+    def _fit_parallel(self, x: List[Array[float]]):
+        duration_ss = []
+        obs_ss = []
+        overall_likelihood = 0
+        for x_i in x:
+            # calculate observation probabilities
+            obs_probs = self._calc_probs(x_i, 'observation')
+
+            # calculate forward probabilities
+            forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
+            overall_likelihood += log_likelihood
+
+            # calculate backwards probabilities
+            backward_probs = self._backward(obs_probs, A)
+
+            # calculate filtered probabilities
+            prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
+
+            # calculate the duration sufficient statistics
+            duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, duration_est, A))
+
+            # calculate the obs sufficient statistics
+            obs_ss.append(self._calc_obs_ss(x_i, prob_i))
+
+        return overall_likelihood, duration_ss, obs_ss
 
     def _calc_duration_ss(self, forward_probs, backward_probs, obs_probs, duration_est, A) -> Tuple[Array[float],Array[float]]:
         '''
@@ -165,13 +198,13 @@ class HSMM_LtR():
         Output:
             N x N matrix of the current timesteps dynamic transition probabilities
         '''
-        duration_probability = list()
+        duration_probability = []
         for i in range(int(self.N)):
             numerator = 1 - self.f_duration.cdf(d[i], *self.duration_params[i])
             denom = max(1 - self.f_duration.cdf(d[i] - self.t_delta, *self.duration_params[i]), 0.001)
             duration_probability.append(numerator/denom)
         self_transition_matrix = np.eye(self.N) * np.array(duration_probability)
-        self_transition_matrix = self_transition_matrix + (np.eye(self.N) - self_transition_matrix).dot(self.A)
+        self_transition_matrix = self_transition_matrix + np.dot(np.eye(self.N) - self_transition_matrix, self.A)
         # Normalize the rows of the transition matrix to sum to 1
         return self_transition_matrix/np.sum(self_transition_matrix, axis=1)[:,np.newaxis]
 
@@ -217,11 +250,11 @@ class HSMM_LtR():
         alpha[0,:] /= np.sum(alpha[0,:])
 
         for t in range(1,obs_probs.shape[0]):
-            alpha[t,:] = alpha[t-1,:].dot(A[t-1,:,:])*obs_probs[t,:]
+            alpha[t,:] = np.dot(alpha[t-1,:],A[t-1,:,:])*obs_probs[t,:]
             alpha_sum = np.sum(alpha[t,:])
             log_likelihood += np.log(1/alpha_sum)
             # Check if any alpha is zero and inject a small probability = 0.001
-            alpha[t,:] = np.nan_to_num(alpha[t,:])
+            alpha[t,:][np.isnan(alpha[t,:])] = 0
             alpha[t,:] += 0.001
             alpha[t,:] /= np.sum(alpha[t,:])
             # Estimate next duration
@@ -233,11 +266,13 @@ class HSMM_LtR():
         # Maximize log likelihood for best model
         return alpha, A, duration_est, log_likelihood
 
-    def _backward(self, obs_probs: Array[float], A: Array[float]):
+    @staticmethod
+    @jit(nopython=True)
+    def _backward(obs_probs: Array[float], A: Array[float]):
         beta = np.ones(obs_probs.shape)
         for t in range(obs_probs.shape[0]-2, -1, -1):
-            beta[t,:] = A[t,:,:].dot(obs_probs[t+1,:]*beta[t+1,:])
-            beta[t,:] = np.nan_to_num(beta[t,:])
+            beta[t,:] = np.dot(A[t,:,:], obs_probs[t+1,:]*beta[t+1,:])
+            beta[t,:][np.isnan(beta[t,:])] = 0
             beta[t,:] += 0.001
             beta[t,:] /= np.sum(beta[t,:])
 

@@ -86,7 +86,7 @@ def main():
     data, durations = hsmm.sim_data(500, norm, obs_params, norm, duration_params)
 
     model = hsmm_model(N=3, f_obs = norm, f_duration = norm)
-    model.fit(data)
+    model.fit(data, parallel=False)
 
     print("Duration Parameters: ")
     print(model.duration_params)
