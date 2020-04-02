@@ -135,10 +135,10 @@ class HSMM_LtR():
         variance = variance/num_sum
 
         # Set the last state values
-        expected_value[-1] = self.T_after*self.t_delta
-        variance[-1] = 0.1
+        expected_value[-1] = self.T_after*(1/60)
+        variance[-1] = 0.5
 
-        variance[variance <= 0.1] = 0.1
+        variance[variance <= 1] = 1
 
         return expected_value, variance
     
@@ -245,17 +245,28 @@ class HSMM_LtR():
         alpha = np.zeros(obs_probs.shape)
         alpha[0,:] = self.pi*obs_probs[0,:]
 
-        log_likelihood = np.log(1/np.sum(alpha[0,:]))
+        alpha_sum = np.sum(alpha[0,:])
 
-        alpha[0,:] /= np.sum(alpha[0,:])
+        if 1/alpha_sum == 1:
+            alpha_sum += 0.001
+
+        log_likelihood = np.log(1/alpha_sum)
+
+        alpha[0,:] /= alpha_sum
 
         for t in range(1,obs_probs.shape[0]):
             alpha[t,:] = np.dot(alpha[t-1,:],A[t-1,:,:])*obs_probs[t,:]
             alpha_sum = np.sum(alpha[t,:])
+
+            alpha_sum += 0.00001
+
+            if 1/alpha_sum == 1:
+                alpha_sum += 0.001
+
             log_likelihood += np.log(1/alpha_sum)
             # Check if any alpha is zero and inject a small probability = 0.001
             alpha[t,:][np.isnan(alpha[t,:])] = 0
-            alpha[t,:] += 0.001
+            alpha[t,:] += np.max(alpha[t,:])/100
             alpha[t,:] /= np.sum(alpha[t,:])
             # Estimate next duration
             duration_est[t,:] = self._estimate_duration(duration_est[t-1,:], A[t-1,:,:], alpha[t-1:t+1,:], obs_probs[t,:])
