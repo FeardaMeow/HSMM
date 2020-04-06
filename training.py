@@ -3,6 +3,7 @@ from scipy.stats import norm
 import numpy as np
 import pickle as pk
 import random
+from sklearn.model_selection import train_test_split
 
 class hsmm_model(hsmm.HSMM_LtR):
     def __init__(self, **kwargs):
@@ -43,23 +44,6 @@ class hsmm_model(hsmm.HSMM_LtR):
         duration_params = [(i,j) for i,j in zip(duration_mean, duration_stdev)]
         self.duration_params = duration_params
 
-def train_test_split(data, p=3):
-    '''
-    Input:
-        A dictionary with PID:array. The array is a list of tuples with (time series, take-over time).
-    Output:
-        (train dictionary, test dictionary)
-    '''
-    train_dict = {}
-    test_dict = {}
-    for key in data:
-        temp_list = data[key]
-        random.shuffle(temp_list)
-        train_dict[key] = temp_list[:-p]
-        test_dict[key] = temp_list[-p:]
-
-    return train_dict, test_dict
-
 def unpack_dict(x):
     '''
     Input:
@@ -69,18 +53,22 @@ def unpack_dict(x):
     '''
     ts_list = []
     tot_list = []
+    gap_list = []
     for key in x:
         for i in x[key]:
             ts_list.append(i[0])
             tot_list.append(i[1])
+            gap_list.append(str(key) + '_' + str(round(i[2], 3)))
 
-    return ts_list, tot_list
+    return ts_list, tot_list, gap_list
+
 
 def main():
     seed = 1234566
     np.random.seed(seed)
     random.seed(seed)
 
+    '''
     obs_params = [(0,1), (4,1), (8,1)]
     duration_params = [(10,1), (15,1), (2,.1)]
 
@@ -88,18 +76,16 @@ def main():
 
     model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
     model.fit(data, parallel=False)
+    '''
 
-    print("Duration Parameters: ")
-    print(model.duration_params)
+    with open('final_data.pk', 'rb') as f:
+        final_data = pk.load(f, encoding='latin1')
 
-    print("Observation Parameters: ")
-    print(model.obs_params)
-
-    #with open('final_data.pk', 'rb') as f:
-    #    final_data = pk.load(f, encoding='latin1')
+    x, y, stratify = unpack_dict(final_data)
 
     # Train Test Split
-    #train, test = train_test_split(final_data, p=3)
+    X_train, X_test, y_train, y_test = train_test_split(x,y, test_size=102, stratify=stratify)
+    print(len(X_train), len(X_test))
 
     #print(train['PID01'][0], train['PID02'][0])
     #print(test['PID01'][0], test['PID02'][0])
