@@ -85,15 +85,20 @@ def main():
 
     # Train Test Split
     X_train, X_test, y_train, y_test = train_test_split(x,y, test_size=102, stratify=stratify)
-    print(len(X_train), len(X_test))
 
-    #print(train['PID01'][0], train['PID02'][0])
-    #print(test['PID01'][0], test['PID02'][0])
-    #with open('train.pk', 'wb') as f:
-    #    pk.dump(train, f)
+    model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
 
-    #with open('test.pk', 'wb') as f:
-    #    pk.dump(test, f)
+    best_model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
+    best_model.likelihood = None
+
+    for i in range(50):
+        model.fit(X_train, parallel=False)
+
+        if best_model.likelihood == None or model.likelihood < best_model.likelihood:
+            best_model = model
+
+    with open('model_train_N3.pk', 'wb') as f:
+        pk.dump(best_model, f)
     
 
 if __name__ == "__main__":
