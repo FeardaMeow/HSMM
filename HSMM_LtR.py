@@ -367,6 +367,8 @@ class HSMM_LtR():
 
             n+=1
 
+        target = y - x.shape[0]*self.t_delta
+
         if y:
             return d_avg, d_low, d_high, target
         else:
