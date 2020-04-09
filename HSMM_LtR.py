@@ -334,7 +334,7 @@ class HSMM_LtR():
 
         return T_1[-1,:], best_path_pointer, duration_est[-1,:]
 
-    def predict(self, x, ci=0.95):
+    def predict(self, x, ci=0.95, y=None):
         ci_std_value = round(norm.ppf(ci + (1-ci)/2),2)
 
         d_avg = 0
@@ -367,7 +367,10 @@ class HSMM_LtR():
 
             n+=1
 
-        return d_avg, d_low, d_high
+        if y:
+            return d_avg, d_low, d_high, target
+        else:
+            return d_avg, d_low, d_high
 
     def _calc_obs_ss(self, x, prob_i):
         '''
