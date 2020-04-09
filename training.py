@@ -85,10 +85,23 @@ def main():
 
     # Train Test Split
     X_train, X_test, y_train, y_test = train_test_split(x,y, test_size=102, stratify=stratify)
+    '''
+    with open('X_train.pk', 'wb') as f:
+        pk.dump(X_train, f)
 
-    model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
+    with open('y_train.pk', 'wb') as f:
+        pk.dump(y_train, f)
 
-    best_model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
+    with open('X_test.pk', 'wb') as f:
+        pk.dump(X_test, f)
+
+    with open('y_test.pk', 'wb') as f:
+        pk.dump(y_test, f)
+    '''
+
+    model = hsmm_model(N=5, f_obs = norm, f_duration = norm, t_delta=1/60)
+
+    best_model = hsmm_model(N=5, f_obs = norm, f_duration = norm, t_delta=1/60)
     best_model.likelihood = None
 
     for i in range(50):
@@ -97,7 +110,7 @@ def main():
         if best_model.likelihood == None or model.likelihood < best_model.likelihood:
             best_model = model
 
-    with open('model_train_N3.pk', 'wb') as f:
+    with open('model_train_N5.pk', 'wb') as f:
         pk.dump(best_model, f)
     
 
