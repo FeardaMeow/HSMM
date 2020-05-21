@@ -6,6 +6,7 @@ import random
 from sklearn.model_selection import StratifiedShuffleSplit
 from operator import itemgetter 
 import pandas as pd
+import os
 
 class hsmm_model(hsmm.HSMM_LtR):
     def __init__(self, **kwargs):
@@ -115,23 +116,22 @@ def unpack_dict(x):
 
     return ts_list, tot_list, gap_list, split_list
 
-
 def main():
     seed = 1234566
     np.random.seed(seed)
     random.seed(seed)
 
+    pid_range = ['PID01','PID02','PID03','PID04','PID05',
+                'PID06','PID07','PID08','PID09','PID10',
+                'PID11','PID12','PID13','PID14','PID15',
+                'PID16','PID17','PID18','PID19','PID20',
+                'PID21','PID22','PID23','PID24','PID25',
+                'PID26','PID27','PID28','PID29','PID30',
+                'PID31','PID32','PID33','PID34']
+   
     '''
-    obs_params = [(0,1), (4,1), (8,1)]
-    duration_params = [(10,1), (15,1), (2,.1)]
-
-    data, durations = hsmm.sim_data(500, norm, obs_params, norm, duration_params)
-
-    model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
-    model.fit(data, parallel=False)
-    '''
-    with open('final_data_ds_other_models.pk', 'rb') as f:
-        final_data = pk.load(f)
+    with open('final_data_ds.pk', 'rb') as f:
+        final_data = pk.load(f, encoding='latin1')
 
     x, y, stratify, splits = unpack_dict(final_data)
 
@@ -150,49 +150,68 @@ def main():
     stratify_test = list(itemgetter(*test)(stratify)) 
     
     
-    with open('X_train_rate_other.pk', 'wb') as f:
+    with open('X_train_rate.pk', 'wb') as f:
         pk.dump(X_train, f)
 
-    with open('y_train_rate_other.pk', 'wb') as f:
+    with open('y_train_rate.pk', 'wb') as f:
         pk.dump(y_train, f)
 
-    with open('X_test_rate_other.pk', 'wb') as f:
+    with open('X_test_rate.pk', 'wb') as f:
         pk.dump(X_test, f)
 
-    with open('y_test_rate_other.pk', 'wb') as f:
+    with open('y_test_rate.pk', 'wb') as f:
         pk.dump(y_test, f)
 
-    with open('stratify_train_rate_other.pk', 'wb') as f:
+    with open('stratify_train_rate.pk', 'wb') as f:
         pk.dump(stratify_train, f)
 
-    with open('stratify_test_rate_other.pk', 'wb') as f:
+    with open('stratify_test_rate.pk', 'wb') as f:
         pk.dump(stratify_test, f)
     
+    with open('X_train.pk', 'rb') as f:
+        X_train = pk.load(f)
     '''
+
+    with open('X_train_rate.pk', 'rb') as f:
+        X_train = pk.load(f)
+    
+    with open('stratify_train_rate.pk', 'rb') as f:
+        stratify_train = pk.load(f)
+    
     for i in range(len(X_train)):
         X_train[i] = X_train[i][:-20]
 
-    best_model = hsmm_model(N=5, f_obs = norm, f_duration = norm, t_delta=1.0/20)
-    best_model.likelihood = None
-    
-    
+    pid_list = []
+    gap_list = []
+    for i in stratify_train:
+        pid_list.append(i.split('_')[0])
+        gap_list.append(i.split('_')[1])
 
-    for i in range(20):
-        model = hsmm_model(N=5, f_obs = norm, f_duration = norm, t_delta=1.0/20)
-        model.fit(X_train, online=False)
+    with open('models/offline/model_train_N5_nc_1.pk', 'rb') as f:
+        starting_model = pk.load(f)
+    # rate (0,1), alpha (0.5,1]
+    # 0.30
+    model_params = {'learning_rate':0.4, 
+                    'learning_rate_alpha':0.5, 
+                    'm':9, 
+                    'm_overlap':2}
+
+    for i in pid_range:
+        # Initial starting model
+        model = starting_model
+
+        # Partition data
+        X_online = [X_train[j] for j,d in enumerate(pid_list) if d == i]
+
+        model.fit(X_online, online=True, **model_params)
         print("Final")
         print("Observation Parameters:")
         print(model.obs_params)
         print("Duration Parameters:")
         print(model.duration_params)
 
-        if best_model.likelihood == None or model.likelihood > best_model.likelihood:
-            best_model = model
-
-    with open('model_train_N5_nc.pk', 'wb') as f:
-        pk.dump(best_model, f)
-    '''
-    
+        with open(os.path.join('models', 'online' , i + '_1.pk'), 'wb') as f:
+            pk.dump(model, f)
     
 if __name__ == "__main__":
     main()

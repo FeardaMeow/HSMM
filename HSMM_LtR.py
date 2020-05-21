@@ -9,7 +9,7 @@ import multiprocessing as mp
 
 class HSMM_LtR():
     # Log Likelihood = - sum_t( log ( 1 / forward norm scaling ) )
-    def __init__(self, N: int, f_obs, f_duration, obs_params = None, duration_params = None, t_delta:float=1/60, A=None, pi=None) -> None:
+    def __init__(self, N: int, f_obs, f_duration, obs_params = None, duration_params = None, t_delta:float=1/6, A=None, pi=None) -> None:
         self.N = N
         self.A = A
         self.pi = pi
@@ -28,29 +28,33 @@ class HSMM_LtR():
         self.likelihood = None
 
         # Time after TOT in seconds
-        self.T_after = 120
+        self.T_after = 60
 
     def _calc_probs(self, x, f='observation'):
         probs_list = []
         if f == 'observation':
             for params in self.obs_params:
-                probs_list.append(self.f_obs.pdf(x, *params))
+                prob_x = self.f_obs.pdf(x, *params)
+                if np.any(prob_x > 1):
+                    prob_x = prob_x/np.max(prob_x)
+                probs_list.append(prob_x)
         
         return np.vstack(probs_list).T
 
-    def fit(self, x: List[Array[float]], n:int=100, parallel:bool=False):
-        # Initialize parameters
-        self._initialize(x)
-        counter = 0
+    def fit(self, x: List[Array[float]], n:int=20, online:bool=False, **kwargs):
+        if online:
+            self._fit_online(x, **kwargs)
+        else:
+            # Initialize parameters
+            self._initialize(x)
+            counter = 0
+            print(self.duration_params)
+            while counter < n:
+                overall_likelihood = 0
+                np.random.shuffle(x)
+                duration_ss = []
+                obs_ss = []
 
-        while counter < n:
-            overall_likelihood = 0
-            np.random.shuffle(x)
-            duration_ss = []
-            obs_ss = []
-            if parallel:
-                pass
-            else:
                 for x_i in tqdm(x):
                     # calculate observation probabilities
                     obs_probs = self._calc_probs(x_i, 'observation')
@@ -70,61 +74,99 @@ class HSMM_LtR():
 
                     # calculate the obs sufficient statistics
                     obs_ss.append(self._calc_obs_ss(x_i, prob_i))
+                
+                print('Iteration ' + str(counter+1) + ': ' + str(overall_likelihood))
+                
+                # check convergence criteria
+                
+                if self.likelihood == None or overall_likelihood > self.likelihood:
+                    best_obs_params = self.obs_params
+                    best_duration_params = self.duration_params
+                    best_likelihood = overall_likelihood
+                
+                if counter == 0:
+                    back_2_likelihood = overall_likelihood
+                    back_1_likelihood = overall_likelihood
+                else:
+                    back_2_likelihood = back_1_likelihood
+                    back_1_likelihood = self.likelihood
+
+                self.likelihood = overall_likelihood
+                
+                if back_2_likelihood > self.likelihood and back_1_likelihood > self.likelihood:
+                    break
+
+                # update observation parameters
+                self._update_obs_params(obs_ss)
+
+                # update duration parameters
+                self._update_duration_params(duration_ss)
+
+                print('Observation Parameters:')
+                print(self.obs_params)
+                print('Duration Parameters:')
+                print(self.duration_params)
+
+                counter += 1
             
-            print('Iteration ' + str(counter+1) + ': ' + str(overall_likelihood))
-            #print("Elapsed = %s" % (end - start))
-            
-            # check convergence criteria
-            if self.likelihood != None and overall_likelihood < self.likelihood:
-                break
-            
-            self.likelihood = overall_likelihood
-
-            # update observation parameters
-            self._update_obs_params(obs_ss)
-
-            # update duration parameters
-            self._update_duration_params(duration_ss)
-
-            print('Observation Parameters:')
-            print(self.obs_params)
-            print('Duration Parameters:')
-            print(self.duration_params)
-
-            counter += 1
+            self.likelihood = best_likelihood
+            self.obs_params = best_obs_params
+            self.duration_params = best_duration_params
     
-    @jit()
-    def _fit_parallel(self, x: List[Array[float]]):
-        duration_ss = []
-        obs_ss = []
-        overall_likelihood = 0
-        for x_i in x:
-            # calculate observation probabilities
-            obs_probs = self._calc_probs(x_i, 'observation')
+    def _fit_online(self, x: List[Array[float]], learning_rate, learning_rate_alpha, m, m_overlap):
+        num_iters = int(np.ceil((len(x)-m)/(m-m_overlap)))
+        
+        num_iters = num_iters if num_iters > 0 else 1
 
-            # calculate forward probabilities
-            forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
-            overall_likelihood += log_likelihood
+        for i in range(num_iters):
+            start_i = i*(m-m_overlap)
+            end_i = start_i + m if start_i + m <= len(x) else len(x)
 
-            # calculate backwards probabilities
-            backward_probs = self._backward(obs_probs, A)
+            duration_ss = []
+            obs_ss = []
 
-            # calculate filtered probabilities
-            prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
+            current_lr = learning_rate*((i+1) ** learning_rate_alpha)
 
-            # calculate the duration sufficient statistics
-            duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, duration_est, A))
+            for x_i in tqdm(x[start_i:end_i]):
+                # calculate observation probabilities
+                obs_probs = self._calc_probs(x_i, 'observation')
 
-            # calculate the obs sufficient statistics
-            obs_ss.append(self._calc_obs_ss(x_i, prob_i))
+                # calculate forward probabilities
+                forward_probs, A, duration_est, log_likelihood = self._forward(obs_probs)
 
-        return overall_likelihood, duration_ss, obs_ss
+                # calculate backwards probabilities
+                backward_probs = self._backward(obs_probs, A)
+
+                # calculate filtered probabilities
+                prob_i = self._filtered(forward_probs, backward_probs, obs_probs, A)
+
+                # calculate the duration sufficient statistics
+                duration_ss.append(self._calc_duration_ss(forward_probs, backward_probs, obs_probs, duration_est, A))
+
+                # calculate the obs sufficient statistics
+                obs_ss.append(self._calc_obs_ss(x_i, prob_i))
+
+                # Update Params
+                self._update_online_params(obs_ss, duration_ss, current_lr)  
 
     def _calc_duration_ss(self, forward_probs, backward_probs, obs_probs, duration_est, A) -> Tuple[Array[float],Array[float]]:
         '''
         TODO: Ensure variance isnt smaller than 0.1
         '''
+        '''
         numerator = forward_probs[:-1,:]*np.einsum('tij,ti->ti',(np.ones((self.N,self.N)) - np.eye(self.N))[np.newaxis,:,:]*A[:-1,:,:],obs_probs[1:,:]*backward_probs[1:,:])
+        num_sum = np.sum(numerator, axis=0)
+        num_sum[num_sum == 0] = 1
+        '''
+        '''
+        num_temp = np.ones(obs_probs[1:,:].shape)
+        numerator = A[:-1,:,:]*(np.ones((self.N,self.N)) - np.eye(self.N))[np.newaxis,:,:]
+        obs_temp = obs_probs[1:,:]*backward_probs[1:,:]
+
+        for t in range(numerator.shape[0]):
+            num_temp[t,:] = np.dot(numerator[t,:,:], obs_temp[t,:])
+        
+        numerator = forward_probs[:-1,:]*num_temp
         num_sum = np.sum(numerator, axis=0)
         num_sum[num_sum == 0] = 1
 
@@ -133,14 +175,18 @@ class HSMM_LtR():
 
         variance = np.sum(numerator*np.power(duration_est[:-1,:] - expected_value[np.newaxis,:],2), axis=0)
         variance = variance/num_sum
+        '''
+
+        expected_value = np.max(duration_est,axis=0)
 
         # Set the last state values
-        expected_value[-1] = self.T_after*(1/60)
-        variance[-1] = 0.5
+        expected_value[-1] = 1
 
-        variance[variance <= 1] = 1
+        #variance[variance <= 0.1] = 0.1
 
-        return expected_value, variance
+        #variance[-1] = 0.001
+
+        return expected_value
     
     def _initialize(self, x:List[Array[float]], n:float = 0.1) -> None:
         # Initialize A
@@ -163,13 +209,17 @@ class HSMM_LtR():
         duration_params = []
 
         for n_array in init_list:
-            # np.average with weights the length of the array
-            split_arrays = np.array_split(n_array[:-self.T_after], self.N-1)
+            split_arrays = np.array_split(n_array[:-int(self.T_after*self.t_delta)], self.N-1)
             obs_temp = []
             duration_temp = []
-            for i in split_arrays:
-                obs_temp.append(np.mean(i))
-                duration_temp.append(i.shape[0]/60.0)
+            quants = [(i+1)*(1/(self.N)) for i in range(self.N-1)]
+            
+            for i,j in zip(split_arrays, quants):
+                #obs_temp.append(np.mean(i))
+                obs_temp.append(np.quantile(n_array, j))
+
+                duration_temp.append(i.shape[0]/20.0)
+            
             obs_temp.append(np.mean(n_array[-self.T_after:]))
             duration_temp.append(self.T_after/60.0)
 
@@ -182,14 +232,19 @@ class HSMM_LtR():
         duration_params = np.asarray(duration_params)
 
         obs_mean = np.mean(obs_params, axis=0)
-        obs_variance = np.std(obs_params, axis=0)
+        obs_variance = np.repeat(0.02, self.N)
         
         duration_mean = np.average(duration_params, axis=0)
+
+
         duration_variance = np.std(duration_params, axis=0)
         duration_variance[-1] = 0.1
 
-        self.obs_params = [(i,j) for i,j in zip(obs_mean, obs_variance)]
-        self.duration_params = [(i,j) for i,j in zip(duration_mean, duration_variance)]
+
+        if self.obs_params == None:
+            self.obs_params = [(i,j) for i,j in zip(obs_mean, obs_variance)]
+        if self.duration_params == None:
+            self.duration_params = [(i,j) for i,j in zip(duration_mean, duration_variance)]
 
     def _calculate_transition_matrix(self, d):
         '''
@@ -218,9 +273,9 @@ class HSMM_LtR():
         Output:
             N x 1 array for the estimated duration for the current timestep
         '''
-        #d_est = ((np.diag(A)*alpha[0,:]*obs_probs)/alpha[1,:])*d + self.t_delta
+        d_est = ((np.diag(A)*alpha[0,:]*obs_probs)/alpha[1,:])*(d+self.t_delta*2)
         # Azimi et al.
-        d_est = alpha[0,:]*d + self.t_delta
+        #d_est = alpha[0,:]*d + self.t_delta
         return d_est
 
     def _forward(self, obs_probs: Array[float]) -> Tuple[Array[float], Array[float], Array[float], float]:
@@ -246,6 +301,7 @@ class HSMM_LtR():
         alpha[0,:] = self.pi*obs_probs[0,:]
 
         alpha_sum = np.sum(alpha[0,:])
+        alpha_sum += 0.001
 
         if 1/alpha_sum == 1:
             alpha_sum += 0.001
@@ -258,7 +314,7 @@ class HSMM_LtR():
             alpha[t,:] = np.dot(alpha[t-1,:],A[t-1,:,:])*obs_probs[t,:]
             alpha_sum = np.sum(alpha[t,:])
 
-            alpha_sum += 0.00001
+            alpha_sum += 0.001
 
             if 1/alpha_sum == 1:
                 alpha_sum += 0.001
@@ -266,7 +322,7 @@ class HSMM_LtR():
             log_likelihood += np.log(1/alpha_sum)
             # Check if any alpha is zero and inject a small probability = 0.001
             alpha[t,:][np.isnan(alpha[t,:])] = 0
-            alpha[t,:] += np.max(alpha[t,:])/100
+            alpha[t,:] += 0.001
             alpha[t,:] /= np.sum(alpha[t,:])
             # Estimate next duration
             duration_est[t,:] = self._estimate_duration(duration_est[t-1,:], A[t-1,:,:], alpha[t-1:t+1,:], obs_probs[t,:])
@@ -322,9 +378,10 @@ class HSMM_LtR():
         T_2 = np.zeros((x.shape[0], self.N))
 
         T_1[0,:] = self.pi * obs_probs[0,:]
+        T_1[0,:] /= np.sum(T_1[0,:])
 
         for t in range(1,x.shape[0]):
-            T_1[t,:] = np.max(T_1[t-1,:][:,np.newaxis] * (A[t-1,:,:] * obs_probs[t,:][np.newaxis,:]), axis=0)
+            T_1[t,:] = np.max(T_1[t-1,:] * (A[t-1,:,:] * obs_probs[t,:][np.newaxis,:]), axis=0)
             T_1[t,:] += 0.001
             T_1[t,:] = T_1[t,:]/np.sum(T_1[t,:])
             T_2[t,:] = np.argmax(T_1[t-1,:][:,np.newaxis] * (A[t-1,:,:] * obs_probs[t,:][np.newaxis,:]), axis=0)
@@ -334,7 +391,10 @@ class HSMM_LtR():
 
         return T_1[-1,:], best_path_pointer, duration_est[-1,:]
 
-    def predict(self, x, ci=0.95, y=None):
+    def predict(self, x, ci=0.95, y=None, N=None):
+        if N == None:
+            N = self.N
+
         ci_std_value = round(norm.ppf(ci + (1-ci)/2),2)
 
         d_avg = 0
@@ -352,14 +412,14 @@ class HSMM_LtR():
         n = 0
         current_prob, current_state, current_duration = self._viterbi(x)
 
-        while n <= self.N and current_state != self.N-1:
-            if n == 1:
+        while n < (N + N//2) and current_state != self.N-1:
+            if n == 0:
                 d_avg = d_avg + np.sum((duration_mean - current_duration[:-1])*current_prob[:-1])
-                d_low = d_low + np.sum(np.clip((duration_mean - duration_stdev*ci_std_value - current_duration[:-1])*current_prob[:-1]), 0, None)
+                d_low = d_low + np.sum(np.clip((duration_mean - duration_stdev*ci_std_value - current_duration[:-1])*current_prob[:-1], 0, None))
                 d_high = d_high + np.sum((duration_mean + duration_stdev*ci_std_value - current_duration[:-1])*current_prob[:-1])
             else:
                 d_avg = d_avg + np.sum((duration_mean)*current_prob[:-1])
-                d_low = d_low + np.sum(np.clip((duration_mean - duration_stdev*ci_std_value)*current_prob[:-1]), 0, None)
+                d_low = d_low + np.sum(np.clip((duration_mean - duration_stdev*ci_std_value)*current_prob[:-1], 0, None))
                 d_high = d_high + np.sum((duration_mean + duration_stdev*ci_std_value)*current_prob[:-1])
 
             current_prob = np.dot(self.A.T, current_prob)
@@ -397,6 +457,17 @@ class HSMM_LtR():
         '''
         Input:
             duration_ss: list of tuples(expected value, variance)
+        Output:
+            None: Will update self.duration_params
+        '''
+        pass
+
+    def _update_online_params(self, obs_ss, duration_ss, learning_rate):
+        '''
+        Input:
+            duration_ss: list of tuples(expected value, variance)
+            obs_ss: list of tuples(expected value, variance)
+            learning_rate: float
         Output:
             None: Will update self.duration_params
         '''

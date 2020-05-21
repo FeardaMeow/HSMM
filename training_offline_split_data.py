@@ -20,6 +20,7 @@ class hsmm_model(hsmm.HSMM_LtR):
         variance = np.sum(prob_i*np.power(x[:,np.newaxis] - mean[np.newaxis,:],2), axis=0)/denom_sum
 
         mean[-1] = np.mean(x[-self.T_after:])
+        variance[np.isnan(variance)] = 0.0025
         variance[variance <= 0.0025] = 0.0025
 
         return mean, variance
@@ -120,18 +121,9 @@ def main():
     seed = 1234566
     np.random.seed(seed)
     random.seed(seed)
-
     '''
-    obs_params = [(0,1), (4,1), (8,1)]
-    duration_params = [(10,1), (15,1), (2,.1)]
-
-    data, durations = hsmm.sim_data(500, norm, obs_params, norm, duration_params)
-
-    model = hsmm_model(N=3, f_obs = norm, f_duration = norm, t_delta=1/60)
-    model.fit(data, parallel=False)
-    '''
-    with open('final_data_ds_other_models.pk', 'rb') as f:
-        final_data = pk.load(f)
+    with open('final_data_ds.pk', 'rb') as f:
+        final_data = pk.load(f, encoding='latin1')
 
     x, y, stratify, splits = unpack_dict(final_data)
 
@@ -148,36 +140,85 @@ def main():
     y_test = list(itemgetter(*test)(y)) 
     stratify_train = list(itemgetter(*train)(stratify)) 
     stratify_test = list(itemgetter(*test)(stratify)) 
+    split_train = list(itemgetter(*train)(splits))
+    split_test = list(itemgetter(*test)(splits))
+
+    train_split_1 = list(np.where(np.array(split_train) == 1)[0])
+    train_split_0 = list(np.where(np.array(split_train) == 0)[0])
+
+    test_split_1 = list(np.where(np.array(split_test) == 1)[0])
+    test_split_0 = list(np.where(np.array(split_test) == 0)[0])
+
+
+    X_train_0 = list(itemgetter(*train_split_0)(X_train)) 
+    X_train_1 = list(itemgetter(*train_split_1)(X_train)) 
+    y_train_0 = list(itemgetter(*train_split_0)(y_train)) 
+    y_train_1 = list(itemgetter(*train_split_1)(y_train)) 
+    stratify_train_0 = list(itemgetter(*train_split_0)(stratify_train)) 
+    stratify_train_1 = list(itemgetter(*train_split_1)(stratify_train)) 
+
+    X_test_0 = list(itemgetter(*test_split_0)(X_test)) 
+    X_test_1 = list(itemgetter(*test_split_1)(X_test)) 
+    y_test_0 = list(itemgetter(*test_split_0)(y_test)) 
+    y_test_1 = list(itemgetter(*test_split_1)(y_test)) 
+    stratify_test_0 = list(itemgetter(*test_split_0)(stratify_test)) 
+    stratify_test_1 = list(itemgetter(*test_split_1)(stratify_test)) 
     
-    
-    with open('X_train_rate_other.pk', 'wb') as f:
-        pk.dump(X_train, f)
 
-    with open('y_train_rate_other.pk', 'wb') as f:
-        pk.dump(y_train, f)
+    # Train
+    with open('X_train_rate_1.pk', 'wb') as f:
+        pk.dump(X_train_1, f)
 
-    with open('X_test_rate_other.pk', 'wb') as f:
-        pk.dump(X_test, f)
+    with open('X_train_rate_0.pk', 'wb') as f:
+        pk.dump(X_train_0, f)
 
-    with open('y_test_rate_other.pk', 'wb') as f:
-        pk.dump(y_test, f)
+    with open('y_train_rate_0.pk', 'wb') as f:
+        pk.dump(y_train_0, f)
 
-    with open('stratify_train_rate_other.pk', 'wb') as f:
-        pk.dump(stratify_train, f)
+    with open('y_train_rate_1.pk', 'wb') as f:
+        pk.dump(y_train_1, f)
 
-    with open('stratify_test_rate_other.pk', 'wb') as f:
-        pk.dump(stratify_test, f)
-    
+    with open('stratify_train_rate_1.pk', 'wb') as f:
+        pk.dump(stratify_train_1, f)
+
+    with open('stratify_train_rate_0.pk', 'wb') as f:
+        pk.dump(stratify_train_0, f)
+
+        
+    # Test
+    with open('X_test_rate_1.pk', 'wb') as f:
+        pk.dump(X_test_1, f)
+
+    with open('X_test_rate_0.pk', 'wb') as f:
+        pk.dump(X_test_0, f)
+
+    with open('y_test_rate_0.pk', 'wb') as f:
+        pk.dump(y_test_0, f)
+
+    with open('y_test_rate_1.pk', 'wb') as f:
+        pk.dump(y_test_1, f)
+
+    with open('stratify_test_rate_1.pk', 'wb') as f:
+        pk.dump(stratify_test_1, f)
+
+    with open('stratify_test_rate_0.pk', 'wb') as f:
+        pk.dump(stratify_test_0, f)
+
+    print(len(X_train_1))
+    print(len(X_test_1))
+
     '''
+    
+    with open('X_train_rate_1.pk', 'rb') as f:
+        X_train = pk.load(f)
+
     for i in range(len(X_train)):
         X_train[i] = X_train[i][:-20]
 
     best_model = hsmm_model(N=5, f_obs = norm, f_duration = norm, t_delta=1.0/20)
     best_model.likelihood = None
     
-    
-
-    for i in range(20):
+    for i in range(25):
         model = hsmm_model(N=5, f_obs = norm, f_duration = norm, t_delta=1.0/20)
         model.fit(X_train, online=False)
         print("Final")
@@ -189,10 +230,9 @@ def main():
         if best_model.likelihood == None or model.likelihood > best_model.likelihood:
             best_model = model
 
-    with open('model_train_N5_nc.pk', 'wb') as f:
+    with open('model_train_N5_nc_1.pk', 'wb') as f:
         pk.dump(best_model, f)
-    '''
-    
+
     
 if __name__ == "__main__":
     main()
