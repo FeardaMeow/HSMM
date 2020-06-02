@@ -1,6 +1,7 @@
 from tslearn.metrics import dtw
 from sklearn.cluster import DBSCAN
 from tslearn.barycenters import dtw_barycenter_averaging
+import numpy as np
 
 def find_indices(stratify):
     '''
