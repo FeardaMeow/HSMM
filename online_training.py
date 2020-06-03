@@ -8,6 +8,7 @@ from operator import itemgetter
 import pandas as pd
 import os
 import ts_clustering as ts
+import tqdm
 
 class hsmm_model(hsmm.HSMM_LtR):
     def __init__(self, **kwargs):
@@ -21,7 +22,8 @@ class hsmm_model(hsmm.HSMM_LtR):
         mean = np.sum(prob_i*x[:,np.newaxis], axis=0)/denom_sum
         variance = np.sum(prob_i*np.power(x[:,np.newaxis] - mean[np.newaxis,:],2), axis=0)/denom_sum
 
-        mean[-1] = np.mean(x[-self.T_after:])
+        mean[-1] = np.nanmean(x[-self.T_after:])
+        variance[np.isnan(variance)] = 0.0025
         variance[variance <= 0.0025] = 0.0025
 
         return mean, variance
@@ -64,6 +66,7 @@ class hsmm_model(hsmm.HSMM_LtR):
         # Obs parameters
         obs_mean = [i[0] for i in obs_ss]
         obs_stdev = [np.sqrt(i[1]) for i in obs_ss]
+        tqdm.tqdm.write(obs_mean)
 
         obs_mean = np.mean(np.array(obs_mean), axis=0)
         obs_stdev = np.mean(np.array(obs_stdev), axis=0)
@@ -91,7 +94,6 @@ class hsmm_model(hsmm.HSMM_LtR):
         new_obs_stdev = current_obs_stdev*(1-learning_rate) + learning_rate*obs_stdev
 
         duration_params = [(i,j) for i,j in zip(new_duration_mean, new_duration_stdev)]
-
         obs_params = [(i,j) for i,j in zip(new_obs_mean, new_obs_stdev)]
 
         self.duration_params = duration_params
@@ -153,14 +155,15 @@ def main():
         starting_model = pk.load(f)
     # rate (0,1), alpha (0.5,1]
     # 0.30
-    model_params = {'learning_rate':0.4, 
-                    'learning_rate_alpha':0.5, 
+    model_params = {'learning_rate':0.8, 
+                    'learning_rate_alpha':0.99, 
                     'm':9, 
                     'm_overlap':2}
-
+    count=0
     for i in cluster_idx:
         # Initial starting model
-        model = starting_model
+        with open('models/offline/model_train_N3_nc_0.pk', 'rb') as f:
+            model = pk.load(f)
 
         # Partition data
         X_online = [X_train[j] for j in cluster_idx[i]]
@@ -172,8 +175,9 @@ def main():
         print("Duration Parameters:")
         print(model.duration_params)
 
-        with open(os.path.join('models', 'online' , i + '_0.pk'), 'wb') as f:
+        with open(os.path.join('models', 'online' , str(count) + '_0.pk'), 'wb') as f:
             pk.dump(model, f)
+        count += 1
     
 
 if __name__ == "__main__":
